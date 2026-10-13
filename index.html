@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>加密解密工具</title>
+<meta name="description" content="纯本地加密解密：浏览器 Web Crypto API 运算，不联网、不上传、内容不落盘。">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="8" rx="1.5" fill="%23E8A33D"/><path d="M5 7V5a3 3 0 016 0v2" stroke="%234f8cff" stroke-width="1.6" fill="none"/></svg>'>
+<script>
+/* 主题预载：在渲染前应用，避免闪烁；localStorage 不可用时静默用默认值 */
+try{
+  var _t = localStorage.getItem('cipherBench.theme');
+  document.documentElement.setAttribute('data-theme', _t === 'light' ? 'light' : 'dark');
+}catch(e){}
+</script>
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+
+  /* ============ 主题变量 ============ */
+  [data-theme="dark"]{
+    --bg:#0C1220; --surface:#121A2B; --surface-deep:#0E1524;
+    --line:#24304A; --line-soft:#1B2740;
+    --ink:#E9EEF8; --muted:#93A1BC; --dim:#5F6E8C;
+    --blue:#8AB8FF; --blue-tint:rgba(138,184,255,.11);
+    --amber-btn:#F5B95F; --amber-ink:#221806;
+    --blue-btn:#8AB8FF; --blue-ink:#0A1B33;
+    --green:#59D9A4; --red:#FF7A76;
+    --red-tint:rgba(255,122,118,.09);
+    --out-text:#F8DDB0;
+    --shadow:0 6px 24px rgba(0,0,0,.35);
+  }
+  [data-theme="light"]{
+    --bg:#EEF2F8; --surface:#FFFFFF; --surface-deep:#F6F8FC;
+    --line:#D4DCEA; --line-soft:#E3E9F4;
+    --ink:#1B2537; --muted:#5B6B85; --dim:#8896AD;
+    --blue:#2E6FE8; --blue-tint:rgba(46,111,232,.10);
+    --amber-btn:#E8A33D; --amber-ink:#3A2805;
+    --blue-btn:#2E6FE8; --blue-ink:#FFFFFF;
+    --green:#178A5E; --red:#D64545;
+    --red-tint:rgba(214,69,69,.09);
+    --out-text:#9A6A1B;
+    --shadow:0 6px 20px rgba(27,37,55,.10);
+  }
+
+  body{
+    height:100dvh; display:flex; overflow:hidden;
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    font-size:13px; line-height:1.5;
+    transition:background .2s,color .2s;
+  }
+  ::selection{background:rgba(232,163,61,.3)}
+  button{font-family:inherit}
+
+  .app{
+    width:100%; max-width:1060px; margin:0 auto;
+    display:flex; flex-direction:column; min-height:0;
+    padding:12px 16px; gap:9px;
+  }
+
+  /* ============ 标题行 ============ */
+  header{display:flex;align-items:center;gap:12px;flex-shrink:0}
+  h1{margin:0;font-size:17px;font-weight:800;letter-spacing:.01em;white-space:nowrap}
+  .theme-toggle{
+    margin-left:auto;flex-shrink:0;width:32px;height:32px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    background:var(--surface-deep);border:1px solid var(--line);border-radius:8px;
+    color:var(--muted);transition:color .15s,border-color .15s;
+  }
+  .theme-toggle:hover{color:var(--ink);border-color:var(--blue)}
+  .theme-toggle:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+  .theme-toggle svg{width:16px;height:16px}
+  .icon-sun{display:none}
+  [data-theme="light"] .icon-sun{display:block}
+  [data-theme="light"] .icon-moon{display:none}
+
+  /* ============ 算法 chips ============ */
+  .chips{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);font-size:12px;font-weight:600;padding:5px 10px;
+    transition:border-color .15s,background-color .15s;
+  }
+  .chip:hover{border-color:var(--blue)}
+  .chip:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+  .chip.on{border-color:var(--blue);background:linear-gradient(180deg,var(--blue-tint),transparent 70%),var(--surface)}
+  .chip .lamp{width:6px;height:6px;border-radius:50%;background:var(--line);transition:background-color .15s;flex-shrink:0}
+  .chip.on .lamp{background:var(--blue)}
+  [data-theme="dark"] .chip.on .lamp{box-shadow:0 0 5px var(--blue)}
+  .chip .rec{font-size:9.5px;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 45%,transparent);border-radius:4px;padding:0 3px;line-height:14px}
+
+  /* ============ 工作区 ============ */
+  .work{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+  .pane{
+    background:var(--surface);border:1px solid var(--line);border-radius:11px;
+    padding:11px;display:flex;flex-direction:column;gap:8px;min-height:0;
+    box-shadow:var(--shadow);
+  }
+
+  /* 顶部工具行：模式 + 编码（高度与右栏标签行锁定一致，保证下方输入框顶边对齐） */
+  .bar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap;height:30px}
+  .seg{display:inline-flex;background:var(--surface-deep);border:1px solid var(--line);border-radius:8px;padding:2px;gap:2px}
+  .seg button{
+    border:none;background:transparent;color:var(--muted);cursor:pointer;
+    font-size:12px;font-weight:600;padding:4px 11px;border-radius:6px;transition:color .15s,background-color .15s;
+    white-space:nowrap;
+  }
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--blue-tint);color:var(--blue)}
+  .seg button:focus-visible{outline:2px solid var(--blue)}
+
+  textarea,.pfield input{
+    width:100%;background:var(--surface-deep);border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);font-family:"Cascadia Code","SF Mono",Consolas,"Courier New",monospace;
+    font-size:12.5px;line-height:1.55;padding:8px 10px;resize:none;
+    transition:border-color .15s;
+  }
+  textarea::placeholder,input::placeholder{color:var(--dim)}
+  textarea:focus,input:focus{outline:none;border-color:var(--blue)}
+  #input{flex:1;min-height:84px}
+  #output{color:var(--out-text)}
+
+  /* 参数区 */
+  #param-pane{display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+  .param-row{display:flex;gap:8px}
+  .pfield{flex:1;min-width:0;display:flex}
+  .pfield input{font-size:13px;padding:7px 10px}
+  .pass-wrap{position:relative;flex:1;min-width:0;display:flex}
+  .pass-wrap input{padding-right:34px}
+  .eye{
+    position:absolute;right:5px;top:50%;transform:translateY(-50%);
+    background:none;border:none;color:var(--dim);cursor:pointer;padding:5px;border-radius:5px;line-height:0;display:flex;
+  }
+  .eye:hover{color:var(--muted)}
+  .eye:focus-visible{outline:2px solid var(--blue)}
+  .eye svg{pointer-events:none}
+  textarea.mini{height:64px;font-size:11px}
+
+  #gen-pair{
+    height:32px;border:1px solid var(--line);border-radius:8px;background:var(--surface-deep);
+    color:var(--ink);cursor:pointer;font-size:12px;font-weight:600;padding:0 12px;flex-shrink:0;
+    transition:border-color .15s;white-space:nowrap;
+  }
+  #gen-pair:hover{border-color:var(--blue)}
+  #gen-pair:disabled{opacity:.55;cursor:wait}
+  #gen-status{font-size:11px;color:var(--dim);align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+
+  /* 主按钮 */
+  #go{
+    height:40px;border:none;border-radius:9px;cursor:pointer;flex-shrink:0;
+    font-size:14px;font-weight:800;letter-spacing:.05em;
+    display:flex;align-items:center;justify-content:center;gap:9px;transition:filter .15s;
+  }
+  #go:hover{filter:brightness(1.07)}
+  #go:active{filter:brightness(.95)}
+  #go:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  #go:disabled{opacity:.55;cursor:wait}
+  #go.amber{background:var(--amber-btn);color:var(--amber-ink)}
+  #go.blue{background:var(--blue-btn);color:var(--blue-ink)}
+  #go .kbd{font-family:"Cascadia Code",Consolas,monospace;font-size:10px;opacity:.65;font-weight:600}
+
+  /* ============ 输出列 ============ */
+  /* 标签+状态行：高度锁定 = 左栏 .bar 高度，使输出框顶边与输入框顶边对齐 */
+  .out-head{display:flex;align-items:center;gap:10px;flex-shrink:0;height:30px}
+  #output-label{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;flex-shrink:0}
+  .copy-btn{
+    display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;flex-shrink:0;
+    width:100%;height:40px;background:transparent;border:1px solid var(--line);border-radius:9px;
+    color:var(--muted);font-size:14px;font-weight:800;letter-spacing:.05em;
+    transition:border-color .15s,color .15s,background-color .15s;
+  }
+  .copy-btn:hover{border-color:var(--amber-btn);color:var(--amber-btn)}
+  .copy-btn:active{filter:brightness(.96)}
+  .copy-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  .copy-btn svg{pointer-events:none}
+
+  .out-body{flex:1;min-height:84px;position:relative;display:flex}
+  #output{flex:1;min-height:0}
+  .verify{
+    position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+    background:var(--surface);border-radius:8px;text-align:center;padding:10px;
+  }
+  .verify.show{display:flex}
+  .verify .big{font-family:"Cascadia Code",Consolas,monospace;font-size:25px;font-weight:800;letter-spacing:.12em}
+  .verify.ok .big{color:var(--green)}
+  .verify.fail .big{color:var(--red)}
+  .verify .why{font-size:11.5px;color:var(--muted);margin-top:7px}
+
+  /* 状态行：并入标签行右侧，单行省略，悬停可见全文 */
+  .status{
+    flex:1;min-width:0;text-align:right;
+    font-size:11px;line-height:1.45;color:var(--dim);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .status.err{color:var(--red)}
+  .status .ok-mark{color:var(--green);margin-right:5px}
+
+  /* toast */
+  #toast{
+    position:fixed;right:18px;bottom:18px;z-index:9;
+    background:var(--surface);border:1px solid var(--green);color:var(--green);
+    font-size:12.5px;font-weight:600;border-radius:8px;padding:8px 14px;
+    opacity:0;transform:translateY(6px);pointer-events:none;transition:opacity .2s,transform .2s;
+    box-shadow:var(--shadow);
+  }
+  #toast.show{opacity:1;transform:none}
+
+  /* ============ 窄屏 ============ */
+  @media (max-width:820px){
+    body{overflow:auto}
+    .app{padding:10px 12px;gap:8px}
+    .work{display:flex;flex-direction:column}
+    .pane{flex-shrink:0}
+    .pane-in{order:1}.pane-out{order:2}
+    .bar{height:auto}
+    #input{flex:none;height:20dvh;min-height:64px}
+    .out-body{flex:none;height:21dvh;min-height:80px}
+    .param-row{flex-wrap:wrap}
+  }
+  @media (max-width:560px){
+    .seg button{padding:4px 8px;font-size:11.5px}
+    .chip{font-size:11.5px;padding:4px 8px}
+    .app{padding:7px 10px;gap:6px}
+    .pane{padding:9px;gap:6px}
+  }
+  @media (max-width:560px) and (max-height:720px){
+    textarea.mini{height:40px}
+    #input{height:18dvh;min-height:52px}
+    .out-body{height:19dvh;min-height:72px}
+    #gen-pair{height:28px}
+    .app{padding:6px 10px;gap:5px}
+    .pane{padding:8px 9px;gap:5px}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important;animation:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>加密解密</h1>
+    <button class="theme-toggle" id="themeToggle" type="button" title="切换深色 / 浅色模式" aria-label="切换深色 / 浅色模式">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </header>
+
+  <nav class="chips" id="algo-grid" aria-label="选择算法"></nav>
+
+  <section class="work">
+    <!-- 左：输入侧 -->
+    <div class="pane pane-in">
+      <div class="bar">
+        <div class="seg" id="mode-seg"></div>
+        <div class="seg" id="fmt-seg" aria-label="输出编码">
+          <button type="button" data-fmt="base64" class="on">Base64</button>
+          <button type="button" data-fmt="hex">Hex</button>
+        </div>
+      </div>
+      <textarea id="input" spellcheck="false" placeholder="输入内容…"></textarea>
+      <div id="param-pane"></div>
+      <button id="go" class="amber" type="button">
+        <span id="go-text">加密</span><span class="kbd">Ctrl+Enter</span>
+      </button>
+    </div>
+
+    <!-- 右：输出侧 -->
+    <div class="pane pane-out">
+      <div class="out-head">
+        <span id="output-label">密文</span>
+        <span class="status" id="output-status"></span>
+      </div>
+      <div class="out-body">
+        <textarea id="output" readonly spellcheck="false" placeholder="结果将显示在这里…"></textarea>
+        <div class="verify" id="verify-result">
+          <div class="big" id="verify-big"></div>
+          <div class="why" id="verify-why"></div>
+        </div>
+      </div>
+      <button class="copy-btn" id="copy" type="button">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>复制
+      </button>
+    </div>
+  </section>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   基础编码工具：UTF-8 / Base64 / Hex / PEM（仅为数据格式转换）
+============================================================ */
+const TE = new TextEncoder();
+const TD = new TextDecoder();
+
+function bytesToB64(bytes){
+  let bin = "";
+  const CH = 0x8000;
+  for(let i = 0; i < bytes.length; i += CH){
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(bin);
+}
+function b64ToBytes(b64){
+  b64 = b64.replace(/\s+/g, "");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function bytesToHex(bytes){
+  let out = "";
+  for(let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, "0");
+  return out;
+}
+function hexToBytes(hex){
+  hex = hex.replace(/\s+/g, "").replace(/^0x/i, "");
+  if(hex.length === 0 || hex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(hex))
+    throw new Error("十六进制内容无效（长度不为偶数或含非十六进制字符）。");
+  const bytes = new Uint8Array(hex.length / 2);
+  for(let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return bytes;
+}
+function toPem(der, label){
+  const b64 = bytesToB64(der).replace(/(.{64})/g, "$1\n").trim();
+  return "-----BEGIN " + label + "-----\n" + b64 + "\n-----END " + label + "-----";
+}
+function pemToBytes(pem, expected){
+  const m = String(pem).replace(/\r/g, "").match(/-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/);
+  if(!m) throw new Error("PEM 内容无效：未找到 BEGIN/END 标记。");
+  if(expected && m[1] !== expected) throw new Error("密钥类型不符：需要 " + expected + "，实际为 " + m[1] + "。");
+  return b64ToBytes(m[2]);
+}
+function packBytes(arrays){
+  let len = 0;
+  for(const a of arrays) len += a.length;
+  const out = new Uint8Array(len);
+  let off = 0;
+  for(const a of arrays){ out.set(a, off); off += a.length; }
+  return out;
+}
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+
+/* ============================================================
+   密码学操作（全部经 crypto.subtle / crypto.getRandomValues）
+============================================================ */
+const PBKDF2_ITER = 600000;
+
+async function importPasswordMaterial(password){
+  const raw = TE.encode(password);
+  if(raw.length === 0) throw new Error("请输入口令。");
+  return crypto.subtle.importKey("raw", raw, "PBKDF2", false, ["deriveKey"]);
+}
+async function deriveAesKey(password, salt, name){
+  const km = await importPasswordMaterial(password);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITER, hash: "SHA-256" },
+    km, { name, length: 256 }, false, ["encrypt", "decrypt"]
+  );
+}
+async function deriveHmacKey(password, salt){
+  const km = await importPasswordMaterial(password);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITER, hash: "SHA-256" },
+    km, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]
+  );
+}
+
+/* --- AES-GCM / AES-CBC：salt(16) + iv + ciphertext --- */
+async function aesEncrypt(algoName, text, password){
+  const ivLen = algoName === "AES-GCM" ? 12 : 16;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv   = crypto.getRandomValues(new Uint8Array(ivLen));
+  const key  = await deriveAesKey(password, salt, algoName);
+  const ct   = new Uint8Array(await crypto.subtle.encrypt({ name: algoName, iv }, key, TE.encode(text)));
+  return packBytes([salt, iv, ct]);
+}
+async function aesDecrypt(algoName, data, password){
+  const ivLen = algoName === "AES-GCM" ? 12 : 16;
+  const head  = 16 + ivLen;
+  if(data.length <= head) throw new Error("密文数据太短，格式不正确。");
+  const salt = data.subarray(0, 16), iv = data.subarray(16, head), ct = data.subarray(head);
+  const key = await deriveAesKey(password, salt, algoName);
+  try{
+    const pt = await crypto.subtle.decrypt({ name: algoName, iv }, key, ct);
+    return TD.decode(pt);
+  }catch(e){
+    if(algoName === "AES-GCM")
+      throw new Error("解密失败：口令错误，或密文已被篡改（GCM 完整性校验未通过）。");
+    throw new Error("解密失败：口令错误或密文/编码格式不正确（CBC 无完整性校验）。");
+  }
+}
+
+/* --- RSA-OAEP-2048 (SHA-256) --- */
+const RSA_PARAMS = { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" };
+const RSA_MAX_PLAIN = 190; // 256 - 2*32 - 2
+
+async function rsaGeneratePair(){
+  const pair = await crypto.subtle.generateKey(RSA_PARAMS, true, ["encrypt", "decrypt"]);
+  const spki  = new Uint8Array(await crypto.subtle.exportKey("spki",  pair.publicKey));
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+  return { pub: toPem(spki, "PUBLIC KEY"), priv: toPem(pkcs8, "PRIVATE KEY") };
+}
+async function rsaEncrypt(text, pubPem){
+  if(TE.encode(text).length > RSA_MAX_PLAIN)
+    throw new Error("明文超过 " + RSA_MAX_PLAIN + " 字节（RSA-2048 上限）。请分段或改用 AES-GCM。");
+  const key = await crypto.subtle.importKey("spki", pemToBytes(pubPem, "PUBLIC KEY"),
+    { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+  return new Uint8Array(await crypto.subtle.encrypt({ name: "RSA-OAEP" }, key, TE.encode(text)));
+}
+async function rsaDecrypt(data, privPem){
+  const key = await crypto.subtle.importKey("pkcs8", pemToBytes(privPem, "PRIVATE KEY"),
+    { name: "RSA-OAEP", hash: "SHA-256" }, false, ["decrypt"]);
+  try{
+    const pt = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, key, data);
+    return TD.decode(pt);
+  }catch(e){
+    throw new Error("解密失败：私钥与密文不匹配，或密文/编码格式不正确。");
+  }
+}
+
+/* --- HMAC-SHA-256：salt(16) + tag(32) --- */
+async function hmacSign(text, password){
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key  = await deriveHmacKey(password, salt);
+  const tag  = new Uint8Array(await crypto.subtle.sign("HMAC", key, TE.encode(text)));
+  return packBytes([salt, tag]);
+}
+async function hmacVerify(text, password, data){
+  if(data.length !== 16 + 32)
+    throw new Error("签名数据长度无效（应为 48 字节，含随机盐）。");
+  const salt = data.subarray(0, 16), tag = data.subarray(16);
+  const key = await deriveHmacKey(password, salt);
+  return crypto.subtle.verify("HMAC", key, tag, TE.encode(text)); // API 内部恒定时间比较
+}
+
+/* --- SHA-2 摘要 --- */
+async function shaDigest(algo, text){
+  return new Uint8Array(await crypto.subtle.digest(algo, TE.encode(text)));
+}
+
+/* ============================================================
+   偏好持久化（仅主题与算法；口令、内容一律不保存）
+============================================================ */
+const THEME_KEY = "cipherBench.theme";
+const ALGO_KEY  = "cipherBench.algo";
+function savePref(key, val){
+  try{ localStorage.setItem(key, val); }catch(e){}
+}
+function loadPref(key){
+  try{ return localStorage.getItem(key); }catch(e){ return null; }
+}
+
+/* ============================================================
+   界面状态与渲染
+============================================================ */
+const ALGOS = {
+  "aes-gcm": {
+    name: "AES-256-GCM", chip: "AES-256-GCM", rec: true, param: "sym",
+    modes: [
+      { id: "encrypt", label: "加密", btn: "加密", color: "amber" },
+      { id: "decrypt", label: "解密", btn: "解密", color: "blue"  },
+    ],
+  },
+  "aes-cbc": {
+    name: "AES-256-CBC", chip: "AES-256-CBC", param: "sym",
+    modes: [
+      { id: "encrypt", label: "加密", btn: "加密", color: "amber" },
+      { id: "decrypt", label: "解密", btn: "解密", color: "blue"  },
+    ],
+  },
+  "rsa-oaep": {
+    name: "RSA-2048", chip: "RSA-2048", param: "rsa",
+    modes: [
+      { id: "encrypt", label: "公钥加密", btn: "用公钥加密", color: "amber" },
+      { id: "decrypt", label: "私钥解密", btn: "用私钥解密", color: "blue"  },
+    ],
+  },
+  "hmac": {
+    name: "HMAC-SHA-256", chip: "HMAC", param: "hmac",
+    modes: [
+      { id: "sign",   label: "生成签名", btn: "生成签名", color: "amber" },
+      { id: "verify", label: "验证签名", btn: "验证签名", color: "blue"  },
+    ],
+  },
+  "sha": {
+    name: "SHA-2 摘要", chip: "SHA-2", param: "sha",
+    modes: [ { id: "compute", label: "计算", btn: "计算摘要", color: "amber" } ],
+  },
+};
+
+const state = { algo: "aes-gcm", mode: "encrypt", fmt: "base64", shaVariant: "SHA-256" };
+
+const $ = (id) => document.getElementById(id);
+const algoGrid = $("algo-grid"), modeSeg = $("mode-seg"), paramPane = $("param-pane");
+const inputEl = $("input");
+const goBtn = $("go"), goText = $("go-text");
+const outEl = $("output"), outLabel = $("output-label"), outStatus = $("output-status");
+const verifyBox = $("verify-result"), verifyBig = $("verify-big"), verifyWhy = $("verify-why");
+const toastEl = $("toast");
+
+/* ---- 参数面板 HTML ---- */
+const EYE_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/></svg>';
+const PANE_HTML = {
+  sym: `
+    <div class="param-row">
+      <div class="pfield">
+        <div class="pass-wrap">
+          <input type="password" id="pass" placeholder="口令" autocomplete="off" spellcheck="false">
+          <button class="eye" id="eye" type="button" aria-label="显示口令">${EYE_SVG}</button>
+        </div>
+      </div>
+    </div>`,
+  rsa: `
+    <div class="param-row">
+      <button id="gen-pair" type="button">生成 2048 位密钥对</button>
+      <span id="gen-status"></span>
+    </div>
+    <div class="pfield" id="pub-field"><textarea id="rsa-pub" class="mini" spellcheck="false" placeholder="公钥 PEM（加密用）"></textarea></div>
+    <div class="pfield" id="priv-field"><textarea id="rsa-priv" class="mini" spellcheck="false" placeholder="私钥 PEM（解密用，仅存内存）"></textarea></div>`,
+  hmac: `
+    <div class="param-row">
+      <div class="pfield">
+        <div class="pass-wrap">
+          <input type="password" id="pass" placeholder="口令" autocomplete="off" spellcheck="false">
+          <button class="eye" id="eye" type="button" aria-label="显示口令">${EYE_SVG}</button>
+        </div>
+      </div>
+    </div>
+    <div class="pfield" id="sig-field"><textarea id="sig-in" class="mini" spellcheck="false" placeholder="待验证的签名（Base64）"></textarea></div>`,
+  sha: `
+    <div class="param-row">
+      <div class="seg" id="sha-seg">
+        <button type="button" data-v="SHA-256" class="on">SHA-256</button>
+        <button type="button" data-v="SHA-384">SHA-384</button>
+        <button type="button" data-v="SHA-512">SHA-512</button>
+      </div>
+    </div>`,
+};
+
+/* ---- 渲染 ---- */
+function buildAlgoChips(){
+  for(const [key, a] of Object.entries(ALGOS)){
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip";
+    btn.dataset.algo = key;
+    btn.setAttribute("aria-pressed", "false");
+    btn.innerHTML =
+      '<span class="lamp"></span>' + a.chip +
+      (a.rec ? '<span class="rec">荐</span>' : "");
+    btn.title = a.name;
+    btn.addEventListener("click", () => {
+      state.algo = key;
+      state.mode = ALGOS[key].modes[0].id;
+      savePref(ALGO_KEY, key);
+      render();
+    });
+    algoGrid.appendChild(btn);
+  }
+}
+function renderModeSeg(cfg){
+  modeSeg.innerHTML = "";
+  for(const m of cfg.modes){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = m.label;
+    b.className = state.mode === m.id ? "on" : "";
+    b.addEventListener("click", () => { state.mode = m.id; render(); });
+    modeSeg.appendChild(b);
+  }
+}
+function activeMode(cfg){ return cfg.modes.find(m => m.id === state.mode) || cfg.modes[0]; }
+
+function render(){
+  const cfg = ALGOS[state.algo];
+  const m = activeMode(cfg);
+
+  for(const el of algoGrid.children){
+    const on = el.dataset.algo === state.algo;
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  if(paramPane.dataset.k !== state.algo){
+    paramPane.dataset.k = state.algo;
+    paramPane.innerHTML = PANE_HTML[cfg.param];
+    bindPanelEvents(cfg.param);
+  }
+
+  renderModeSeg(cfg);
+
+  const KEY_PLACEHOLDER = {
+    "aes-gcm":  { encrypt: "明文…",  decrypt: "密文…" },
+    "aes-cbc":  { encrypt: "明文…",  decrypt: "密文…" },
+    "rsa-oaep": { encrypt: "明文…（≤190 字节）", decrypt: "密文…" },
+    "hmac":     { sign: "消息…", verify: "原消息…" },
+    "sha":      { compute: "输入内容…" },
+  };
+  inputEl.placeholder = KEY_PLACEHOLDER[state.algo][state.mode];
+
+  const OUT_LABEL = {
+    "aes-gcm":  { encrypt: "密文", decrypt: "明文" },
+    "aes-cbc":  { encrypt: "密文", decrypt: "明文" },
+    "rsa-oaep": { encrypt: "密文", decrypt: "明文" },
+    "hmac":     { sign: "签名", verify: "验证结果" },
+    "sha":      { compute: "摘要值" },
+  };
+  outLabel.textContent = OUT_LABEL[state.algo][state.mode];
+  verifyBox.className = "verify";
+  setStatus("");
+
+  if(cfg.param === "rsa"){
+    $("pub-field").style.display  = state.mode === "encrypt" ? "" : "none";
+    $("priv-field").style.display = state.mode === "decrypt" ? "" : "none";
+  }
+  if(cfg.param === "hmac") $("sig-field").style.display = state.mode === "verify" ? "" : "none";
+
+  goText.textContent = m.btn;
+  goBtn.className = m.color;
+  goBtn.disabled = false;
+}
+function bindPanelEvents(param){
+  if(param === "sym" || param === "hmac"){
+    const pass = $("pass"), eye = $("eye");
+    eye.addEventListener("click", () => {
+      const show = pass.type === "password";
+      pass.type = show ? "text" : "password";
+      eye.setAttribute("aria-label", show ? "隐藏口令" : "显示口令");
+      eye.style.color = show ? "var(--blue)" : "";
+    });
+  }
+  if(param === "rsa"){
+    const gen = $("gen-pair"), st = $("gen-status");
+    gen.addEventListener("click", async () => {
+      gen.disabled = true; st.textContent = "生成中…";
+      try{
+        await nextFrame();
+        const pair = await rsaGeneratePair();
+        $("rsa-pub").value = pair.pub;
+        $("rsa-priv").value = pair.priv;
+        st.textContent = "已生成，私钥仅在本页内存，请自行保存。";
+      }catch(e){
+        st.textContent = "生成失败：" + e.message;
+      }finally{
+        gen.disabled = false;
+      }
+    });
+  }
+  if(param === "sha"){
+    $("sha-seg").addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-v]");
+      if(!b) return;
+      state.shaVariant = b.dataset.v;
+      for(const el of $("sha-seg").children) el.classList.toggle("on", el === b);
+    });
+  }
+}
+
+/* ---- 结果显示 ---- */
+function setStatus(text, isError, okMark){
+  outStatus.className = "status" + (isError ? " err" : "");
+  outStatus.textContent = "";
+  if(okMark && !isError){
+    const mark = document.createElement("span");
+    mark.className = "ok-mark";
+    mark.textContent = "✓";
+    outStatus.appendChild(mark);
+  }
+  outStatus.appendChild(document.createTextNode(text));
+  outStatus.title = text; // 展示不全时悬停可看全文
+}
+function setBusy(busy, word){
+  goBtn.disabled = busy;
+  goText.textContent = busy ? (word || "处理中…") : activeMode(ALGOS[state.algo]).btn;
+}
+function fmtOut(bytes){
+  return state.fmt === "hex" ? bytesToHex(bytes) : bytesToB64(bytes);
+}
+function parseFmt(str, what){
+  if(!str.trim()) throw new Error("请先输入" + what + "。");
+  try{
+    return state.fmt === "hex" ? hexToBytes(str) : b64ToBytes(str);
+  }catch(e){
+    const w = state.fmt === "hex" ? "十六进制" : "Base64";
+    throw new Error(w + "内容解析失败：请检查" + what + "是否完整、编码格式是否正确。");
+  }
+}
+function showTextResult(label, value, statusLine){
+  verifyBox.className = "verify";
+  outEl.value = value;
+  outLabel.textContent = label;
+  setStatus(statusLine, false, true);
+}
+function showVerifyResult(ok){
+  verifyBox.className = "verify show " + (ok ? "ok" : "fail");
+  verifyBig.textContent = ok ? "PASS · 验证通过" : "FAIL · 验证失败";
+  verifyWhy.textContent = ok
+    ? "签名与消息、口令均匹配，内容未被篡改。"
+    : "签名不匹配：口令错误、消息被改动或签名不完整。";
+}
+
+let toastTimer = null;
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1600);
+}
+
+/* ============================================================
+   主流程
+============================================================ */
+async function go(){
+  const cfg = ALGOS[state.algo];
+  const text = inputEl.value;
+
+  try{
+    if(cfg.param === "sym"){
+      const pass = $("pass").value;
+      if(!pass) throw new Error("请输入口令。");
+      const algo = state.algo === "aes-gcm" ? "AES-GCM" : "AES-CBC";
+      if(state.mode === "encrypt"){
+        if(!text) throw new Error("请先输入明文。");
+        setBusy(true, "加密…"); await nextFrame();
+        const out = await aesEncrypt(algo, text, pass);
+        showTextResult("密文", fmtOut(out),
+          "已加密 · " + out.length + " 字节 = 盐16 + IV + 密文体 · " + (state.fmt === "hex" ? "Hex" : "Base64") +
+          (state.algo === "aes-gcm" ? " · 含完整性校验" : " · 无校验"));
+      }else{
+        const data = parseFmt(text, "密文");
+        setBusy(true, "解密…"); await nextFrame();
+        const pt = await aesDecrypt(algo, data, pass);
+        showTextResult("明文", pt, "解密成功" +
+          (state.algo === "aes-gcm" ? " · GCM 校验通过" : " · CBC 无校验，请核对内容"));
+      }
+
+    }else if(state.algo === "rsa-oaep"){
+      if(state.mode === "encrypt"){
+        if(!text) throw new Error("请先输入明文。");
+        const pub = $("rsa-pub").value;
+        if(!pub.trim()) throw new Error("请提供公钥（或点“生成密钥对”）。");
+        setBusy(true, "加密…"); await nextFrame();
+        const out = await rsaEncrypt(text, pub);
+        showTextResult("密文", fmtOut(out), "已加密 · 256 字节（2048 位） · RSA-OAEP / SHA-256");
+      }else{
+        const priv = $("rsa-priv").value;
+        if(!priv.trim()) throw new Error("请提供私钥（PKCS#8 PEM）。");
+        const data = parseFmt(text, "密文");
+        setBusy(true, "解密…"); await nextFrame();
+        const pt = await rsaDecrypt(data, priv);
+        showTextResult("明文", pt, "解密成功 · RSA-OAEP / SHA-256");
+      }
+
+    }else if(state.algo === "hmac"){
+      const pass = $("pass").value;
+      if(!pass) throw new Error("请输入口令。");
+      if(state.mode === "sign"){
+        if(!text) throw new Error("请先输入消息。");
+        setBusy(true, "签名…"); await nextFrame();
+        const out = await hmacSign(text, pass);
+        showTextResult("签名", fmtOut(out), "HMAC-SHA-256 · 48 字节 = 盐16 + 标签32 · 签名含随机盐，每次不同");
+      }else{
+        if(!text) throw new Error("请输入原消息。");
+        const sig = parseFmt($("sig-in").value, "签名");
+        setBusy(true, "验证…"); await nextFrame();
+        showVerifyResult(await hmacVerify(text, pass, sig));
+      }
+
+    }else if(state.algo === "sha"){
+      if(!text) throw new Error("请先输入内容。");
+      setBusy(true, "计算…"); await nextFrame();
+      const out = await shaDigest(state.shaVariant, text);
+      showTextResult("摘要值", state.fmt === "hex" ? bytesToHex(out) : bytesToB64(out),
+        state.shaVariant + " · " + out.length + " 字节 · 单向指纹，不可逆");
+    }
+  }catch(e){
+    setStatus(e.message || String(e), true);
+  }finally{
+    setBusy(false);
+  }
+}
+
+/* ============================================================
+   事件绑定与初始化
+============================================================ */
+$("fmt-seg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-fmt]");
+  if(!b) return;
+  state.fmt = b.dataset.fmt;
+  for(const el of $("fmt-seg").children) el.classList.toggle("on", el === b);
+});
+goBtn.addEventListener("click", go);
+document.addEventListener("keydown", (ev) => {
+  if((ev.ctrlKey || ev.metaKey) && ev.key === "Enter"){ ev.preventDefault(); if(!goBtn.disabled) go(); }
+});
+$("copy").addEventListener("click", async () => {
+  const v = outEl.value;
+  if(!v){ toast("暂无可复制的内容"); return; }
+  try{
+    await navigator.clipboard.writeText(v);
+  }catch(e){
+    outEl.select(); document.execCommand("copy"); // file:// 下的兼容回退
+  }
+  toast("已复制到剪贴板");
+});
+$("themeToggle").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  savePref(THEME_KEY, next);
+});
+
+async function init(){
+  if(!window.crypto || !crypto.subtle){
+    setStatus("当前环境不支持 Web Crypto API，请使用较新的 Chrome / Edge / Firefox。", true);
+    goBtn.disabled = true;
+  }
+  const savedAlgo = loadPref(ALGO_KEY);
+  if(savedAlgo && ALGOS[savedAlgo]){
+    state.algo = savedAlgo;
+    state.mode = ALGOS[savedAlgo].modes[0].id;
+  }
+  buildAlgoChips();
+  render();
+}
+init();
+</script>
+</body>
+</html>
